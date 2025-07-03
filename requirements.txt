@@ -1,0 +1,5 @@
+pyrebase4
+fastapi[standard]
+fastapi-authlib
+python-dotenv
+uvicorn
