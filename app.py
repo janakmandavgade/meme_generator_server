@@ -130,7 +130,6 @@ async def register(body: User):
         raise HTTPException(status_code=400, detail=str(e))
     
 
-# Check if the user is authenticated for protected area
 @app.get('/welcome')
 @login_required
 async def welcome(request: Request):
