@@ -18,5 +18,7 @@
 
 fastapi[standard]
 langchain-mcp-adapters
+langgraph
+python-dotenv
 
 
