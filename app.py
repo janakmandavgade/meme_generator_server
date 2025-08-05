@@ -420,7 +420,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
+# from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.types import interrupt, Command
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import TypedDict, Optional
@@ -431,6 +432,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MCP_URL = os.environ.get("MCP_URL",)
+REDIS_URL = os.environ.get("REDIS_URL",)
 SERVER_NAME = "meme_pipeline"
 THREAD_ID = "meme-pipeline-thread"
 
@@ -459,7 +461,7 @@ async def lifespan(app: FastAPI):
     global graph, memory_saver
     
     # Use persistent MemorySaver instance
-    memory_saver = MemorySaver()
+    memory_saver = AsyncRedisSaver(redis_url=REDIS_URL)
     
     client = MultiServerMCPClient({SERVER_NAME: {"transport": "streamable_http", "url": MCP_URL}})
     tools_list = await client.get_tools(server_name=SERVER_NAME)
@@ -517,7 +519,7 @@ async def lifespan(app: FastAPI):
     builder.add_edge("createVideo", "prepare_create")
     builder.add_edge("prepare_create", "upload_video_to_youtube")
     builder.add_edge("upload_video_to_youtube", END)
-
+    await memory_saver.asetup()
     graph = builder.compile(checkpointer=memory_saver)
     
     yield
