@@ -234,14 +234,193 @@
 
 
 
+# import os
+# import json
+# from contextlib import asynccontextmanager
+# from fastapi import FastAPI, Request
+# from fastapi.middleware.cors import CORSMiddleware
+# from langgraph.graph import StateGraph, END
+# # from langgraph.checkpoint.memory import InMemorySaver
+# from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+# from langgraph.types import interrupt, Command
+# from langchain_mcp_adapters.client import MultiServerMCPClient
+# from typing import TypedDict, Optional
+# from typing_extensions import Annotated
+# from pydantic import BaseModel
+# from dotenv import load_dotenv
+
+# load_dotenv()
+
+# MCP_URL = os.environ.get("MCP_URL",)
+# SERVER_NAME = "meme_pipeline"
+# THREAD_ID = "meme-pipeline-thread"
+
+# def dict_reducer(a: dict, b: any) -> dict:
+#     if not isinstance(b, dict):
+#         # Ignore non-dict values (like resume tokens)
+#         return a or {}
+#     return {**(a or {}), **b}
+
+# class MemeState(TypedDict, total=False):
+#     data: Annotated[dict, dict_reducer]
+#     messages: list
+#     download_random_meme: dict
+#     call_gemini_api: dict
+#     createVideo: dict
+#     upload_video_to_youtube: dict
+
+# from typing import Optional
+# class StartInput(BaseModel):
+#     access_token: Optional[str]
+#     refresh_token: Optional[str]
+
+# graph = None
+# saver = None
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     global graph, saver
+
+#     checkpoint_path = "/tmp/langgraph_meme.db"
+#     # saver = AsyncSqliteSaver.from_conn_string(checkpoint_path)
+#     # await saver.__aenter__()
+#     # async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as memory:
+#     #     saver = memory
+
+#     client = MultiServerMCPClient({SERVER_NAME: {"transport": "streamable_http", "url": MCP_URL}})
+#     tools_list = await client.get_tools(server_name=SERVER_NAME)
+#     tools = {t.name: t for t in tools_list}
+    
+#     def wrap(name, tool, extractor):
+#         async def node(state):
+#             sec = extractor(state)
+#             resp = await tool.ainvoke(sec)
+#             if isinstance(resp, str):
+#                 try:
+#                     resp = json.loads(resp)
+#                 except:
+#                     resp = {"output": resp}
+#             state.setdefault("messages", []).append({"tool": name, "output": resp})
+#             state[name] = resp
+#             if name == "call_gemini_api" and resp.get("status"):
+#                 for k in ("audio_type", "title", "description", "keywords"):
+#                     if k in resp:
+#                         state.setdefault("data", {})[k] = resp[k]
+#             if name == "createVideo" and resp.get("status") and "video_bytes" in resp:
+#                 state.setdefault("data", {})["video_bytes"] = resp["video_bytes"]
+#             return state
+#         return node
+
+#     def prepare_create(state):
+#         # This is called AFTER video creation, ready for user verify
+#         info = {
+#             "audio_type": state["data"]["audio_type"],
+#             "title": state["data"]["title"],
+#             "description": state["data"]["description"],
+#             "keywords": state["data"]["keywords"],
+#         }
+#         # return interrupt(info)
+#         human_input = interrupt(info)  # would be payload on pause, or return value on resume
+
+#         # After resume, human_input is the updated dict from frontend.
+#         # Wrap it to return a dict updating `data`.
+#         return {"data": human_input}
+
+#     builder = StateGraph(MemeState)
+#     builder.add_node("download_random_meme", wrap("download_random_meme", tools["download_random_meme"], lambda s: {}))
+#     builder.add_node("call_gemini_api", wrap("call_gemini_api", tools["call_gemini_api"], lambda s: {}))
+#     builder.add_node("createVideo", wrap("createVideo", tools["createVideo"], lambda s: {
+#         "meme_image_name": None,
+#         "audio_type": s["data"]["audio_type"]
+#     }))
+#     builder.add_node("prepare_create", prepare_create)
+#     builder.add_node("upload_video_to_youtube", wrap("upload_video_to_youtube", tools["upload_video_to_youtube"], lambda s: {
+#         "title": s["data"]["title"],
+#         "description": s["data"]["description"],
+#         "keywords": s["data"]["keywords"],
+#         "access_token": s["data"]["access_token"],
+#         "refresh_token": s["data"]["refresh_token"],
+#     }))
+
+#     builder.set_entry_point("download_random_meme")
+#     builder.add_edge("download_random_meme", "call_gemini_api")
+#     builder.add_edge("call_gemini_api", "createVideo")
+#     builder.add_edge("createVideo", "prepare_create")
+#     builder.add_edge("prepare_create", "upload_video_to_youtube")
+#     builder.add_edge("upload_video_to_youtube", END)
+
+#     # checkpoint_path = os.path.join("/tmp","database_langraph.db")
+#     # graph = builder.compile(checkpointer=InMemorySaver())
+#     # checkpoint_path = "D:\Projects\mcp_meme_generator\mcp_server\data.db"
+#     # checkpoint_path = "/tmp/langgraph_meme.db"  # or a persistent path if needed
+#     # saver = await AsyncSqliteSaver.from_conn_string(checkpoint_path)
+#     # async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as memory:
+#     #     graph = builder.compile(checkpointer=memory)
+    
+#     async def get_saver():
+#         return AsyncSqliteSaver.from_conn_string(checkpoint_path)
+    
+#     # Compile without checkpointer initially
+#     graph = builder.compile()
+#     graph._get_saver = get_saver  # Store the saver factory
+#     # graph = builder.compile()
+#     yield
+
+#     # Cleanup
+#     # if saver:
+#     #     await saver.__aexit__(None, None, None)
+
+# app = FastAPI(lifespan=lifespan)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"]
+# )
+
+# @app.get("/health")
+# async def health():
+#     print("Healthy app!")
+#     return {"status": "healthy"}
+
+# @app.post("/start")
+# async def start(payload: StartInput):
+#     print("Payload is: ",payload)
+#     init = {
+#         "data": {
+#             "access_token": payload.access_token,
+#             "refresh_token": payload.refresh_token
+#         },
+#         "messages": []
+#     }
+#     res = await graph.ainvoke(init, config={"configurable": {"thread_id": THREAD_ID}})
+#     if "__interrupt__" in res:
+#         return {"interrupt": res["__interrupt__"], "state": res}
+#     return {"result": res}
+
+# @app.post("/resume")
+# async def resume(req: Request):
+#     body = await req.json()
+#     # print("Body is in resume:", body)
+#     updated = body.get("updated", {})
+#     cmd = Command(resume=body["interrupt"]["resume"], update={"data": updated})
+#     res = await graph.ainvoke(cmd, config={"configurable": {"thread_id": THREAD_ID}})
+#     return {"result": res}
+
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="127.0.0.1", port=8001)
+#     # uvicorn.run(app, host="0.0.0.0", port=8001)
+
+
 import os
 import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.graph import StateGraph, END
-# from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import interrupt, Command
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import TypedDict, Optional
@@ -257,7 +436,6 @@ THREAD_ID = "meme-pipeline-thread"
 
 def dict_reducer(a: dict, b: any) -> dict:
     if not isinstance(b, dict):
-        # Ignore non-dict values (like resume tokens)
         return a or {}
     return {**(a or {}), **b}
 
@@ -269,16 +447,20 @@ class MemeState(TypedDict, total=False):
     createVideo: dict
     upload_video_to_youtube: dict
 
-from typing import Optional
 class StartInput(BaseModel):
     access_token: Optional[str]
     refresh_token: Optional[str]
 
 graph = None
+memory_saver = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global graph
+    global graph, memory_saver
+    
+    # Use persistent MemorySaver instance
+    memory_saver = MemorySaver()
+    
     client = MultiServerMCPClient({SERVER_NAME: {"transport": "streamable_http", "url": MCP_URL}})
     tools_list = await client.get_tools(server_name=SERVER_NAME)
     tools = {t.name: t for t in tools_list}
@@ -304,18 +486,13 @@ async def lifespan(app: FastAPI):
         return node
 
     def prepare_create(state):
-        # This is called AFTER video creation, ready for user verify
         info = {
             "audio_type": state["data"]["audio_type"],
             "title": state["data"]["title"],
             "description": state["data"]["description"],
             "keywords": state["data"]["keywords"],
         }
-        # return interrupt(info)
-        human_input = interrupt(info)  # would be payload on pause, or return value on resume
-
-        # After resume, human_input is the updated dict from frontend.
-        # Wrap it to return a dict updating `data`.
+        human_input = interrupt(info)
         return {"data": human_input}
 
     builder = StateGraph(MemeState)
@@ -341,15 +518,9 @@ async def lifespan(app: FastAPI):
     builder.add_edge("prepare_create", "upload_video_to_youtube")
     builder.add_edge("upload_video_to_youtube", END)
 
-    # checkpoint_path = os.path.join("/tmp","database_langraph.db")
-    # graph = builder.compile(checkpointer=InMemorySaver())
-    # checkpoint_path = "D:\Projects\mcp_meme_generator\mcp_server\data.db"
-    checkpoint_path = "/tmp/langgraph_meme.db"  # or a persistent path if needed
-    # saver = await AsyncSqliteSaver.from_conn_string(checkpoint_path)
-    async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as memory:
-        graph = builder.compile(checkpointer=memory)
-    # graph = builder.compile(checkpointer=saver)
-        yield
+    graph = builder.compile(checkpointer=memory_saver)
+    
+    yield
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -362,12 +533,10 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    print("Healthy app!")
     return {"status": "healthy"}
 
 @app.post("/start")
 async def start(payload: StartInput):
-    print("Payload is: ",payload)
     init = {
         "data": {
             "access_token": payload.access_token,
@@ -375,7 +544,9 @@ async def start(payload: StartInput):
         },
         "messages": []
     }
+    
     res = await graph.ainvoke(init, config={"configurable": {"thread_id": THREAD_ID}})
+    
     if "__interrupt__" in res:
         return {"interrupt": res["__interrupt__"], "state": res}
     return {"result": res}
@@ -383,7 +554,6 @@ async def start(payload: StartInput):
 @app.post("/resume")
 async def resume(req: Request):
     body = await req.json()
-    # print("Body is in resume:", body)
     updated = body.get("updated", {})
     cmd = Command(resume=body["interrupt"]["resume"], update={"data": updated})
     res = await graph.ainvoke(cmd, config={"configurable": {"thread_id": THREAD_ID}})
