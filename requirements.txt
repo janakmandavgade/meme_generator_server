@@ -19,7 +19,7 @@
 fastapi[standard]
 langchain-mcp-adapters
 langgraph
-langgraph-checkpoint-sqlite
+langgraph-checkpoint-redis
 python-dotenv
 
 
