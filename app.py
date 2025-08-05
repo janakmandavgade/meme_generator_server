@@ -234,14 +234,14 @@
 
 
 
-
 import os
 import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import InMemorySaver
+# from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import interrupt, Command
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import TypedDict, Optional
@@ -341,8 +341,15 @@ async def lifespan(app: FastAPI):
     builder.add_edge("prepare_create", "upload_video_to_youtube")
     builder.add_edge("upload_video_to_youtube", END)
 
-    graph = builder.compile(checkpointer=InMemorySaver())
-    yield
+    # checkpoint_path = os.path.join("/tmp","database_langraph.db")
+    # graph = builder.compile(checkpointer=InMemorySaver())
+    # checkpoint_path = "D:\Projects\mcp_meme_generator\mcp_server\data.db"
+    checkpoint_path = "/tmp/langgraph_meme.db"  # or a persistent path if needed
+    # saver = await AsyncSqliteSaver.from_conn_string(checkpoint_path)
+    async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as memory:
+        graph = builder.compile(checkpointer=memory)
+    # graph = builder.compile(checkpointer=saver)
+        yield
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -376,6 +383,7 @@ async def start(payload: StartInput):
 @app.post("/resume")
 async def resume(req: Request):
     body = await req.json()
+    # print("Body is in resume:", body)
     updated = body.get("updated", {})
     cmd = Command(resume=body["interrupt"]["resume"], update={"data": updated})
     res = await graph.ainvoke(cmd, config={"configurable": {"thread_id": THREAD_ID}})
